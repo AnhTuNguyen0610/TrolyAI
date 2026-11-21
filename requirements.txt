@@ -1,0 +1,8 @@
+python-dotenv
+pydantic>=2
+langchain-core
+langchain-openai
+langchain-community
+langgraph
+langgraph-checkpoint-sqlite
+gradio>=6.0.0
