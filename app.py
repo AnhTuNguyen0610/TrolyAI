@@ -1,16 +1,29 @@
 # app.py
 
+import hashlib
 import gradio as gr
 from pathlib import Path
 from agent_core import TroLyAI
 from session_manager import quan_ly_phien
+
+# ─── Helpers ──────────────────────────────────────────────────────────
+
+def tao_ma_user(yeu_cau_request: gr.Request) -> str:
+    """
+    Mã user ổn định giữa các lần chạy lại server.
+    (hash() của Python bị đổi mỗi lần khởi động -> agent mất trí nhớ dài hạn)
+    Demo: dùng IP. Production: dùng login system.
+    """
+    host = str(yeu_cau_request.client.host)
+    return "user_" + hashlib.sha256(host.encode()).hexdigest()[:8]
+
 
 # ─── Callbacks ────────────────────────────────────────────────────────
 
 def khoi_tao_phien(yeu_cau_request: gr.Request):
     """Tạo session mới khi người dùng mở app."""
     # Trong demo: dùng IP làm mã user. Production: dùng login system
-    ma_user = f"user_{hash(str(yeu_cau_request.client.host)) % 10000:04d}"
+    ma_user = tao_ma_user(yeu_cau_request)
     phien = quan_ly_phien.tao_phien_moi(ma_user)
 
     thu_muc = Path(f"./workspaces/{ma_user}")
@@ -58,7 +71,7 @@ def dat_lai(phien, yeu_cau_request: gr.Request):
     if phien and phien.agent:
         phien.agent.don_dep()
 
-    ma_user = f"user_{hash(str(yeu_cau_request.client.host)) % 10000:04d}"
+    ma_user = tao_ma_user(yeu_cau_request)
     phien_moi = quan_ly_phien.tao_phien_moi(ma_user)
 
     thu_muc = Path(f"./workspaces/{ma_user}")
