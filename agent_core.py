@@ -1,5 +1,6 @@
 # agent_core.py
 
+import os
 import uuid
 import sqlite3
 from typing import Annotated, TypedDict, Optional, List, Any
@@ -20,6 +21,7 @@ from tools_module import tao_tools, lay_mo_ta_tools
 load_dotenv(override=True)
 
 MAX_VONG_DANH_GIA = 3
+DUONG_DAN_DB = os.getenv("TROLYAI_DB", "memory.db")  # bộ nhớ dài hạn
 
 
 # ─── State ────────────────────────────────────────────────────────────
@@ -77,7 +79,7 @@ class TroLyAI:
         self.evaluator_llm = llm_evaluator.with_structured_output(KetQuaDanhGia)
 
         # SQLite checkpointer — nhớ qua các session
-        self.conn = sqlite3.connect("memory.db", check_same_thread=False)
+        self.conn = sqlite3.connect(DUONG_DAN_DB, check_same_thread=False)
         self.checkpointer = SqliteSaver(self.conn)
 
         # Build graph
