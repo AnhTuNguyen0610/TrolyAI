@@ -188,18 +188,14 @@ Phản hồi cụ thể cần khắc phục:
 
 Hãy làm lại và đảm bảo khắc phục được tất cả điểm trên."""
 
-        tin_nhan = state["messages"]
-        da_co_system = any(isinstance(m, SystemMessage) for m in tin_nhan)
-
-        if da_co_system:
-            tin_nhan_moi = []
-            for m in tin_nhan:
-                if isinstance(m, SystemMessage):
-                    tin_nhan_moi.append(SystemMessage(content=system_content))
-                else:
-                    tin_nhan_moi.append(m)
-        else:
-            tin_nhan_moi = [SystemMessage(content=system_content)] + list(tin_nhan)
+        # Bỏ các tin nhắn "[Evaluator]" khỏi context của Worker: chúng chỉ để hiển thị,
+        # nếu để lại Worker sẽ bắt chước format đó và nhiễu lịch sử.
+        tin_nhan = [
+            m for m in state["messages"]
+            if not (isinstance(m, AIMessage) and (m.content or "").startswith("[Evaluator]"))
+            and not isinstance(m, SystemMessage)
+        ]
+        tin_nhan_moi = [SystemMessage(content=system_content)] + tin_nhan
 
         phan_hoi = self.worker_llm.invoke(tin_nhan_moi)
         return {"messages": [phan_hoi]}
