@@ -21,6 +21,70 @@ from tools_module import tao_tools, lay_mo_ta_tools
 load_dotenv(override=True)
 
 MAX_VONG_DANH_GIA = 3
+
+# ─── Cấu hình LLM provider ───────────────────────────────────────────
+# Tất cả đều dùng API tương thích OpenAI -> chỉ khác base_url / api_key / model.
+# Chọn provider bằng biến môi trường LLM_PROVIDER (mặc định: gemini).
+CAC_PROVIDER = {
+    "gemini": {
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "bien_key": "GOOGLE_API_KEY",
+        "model": "gemini-2.5-flash",
+    },
+    "groq": {
+        "base_url": "https://api.groq.com/openai/v1",
+        "bien_key": "GROQ_API_KEY",
+        "model": "llama-3.3-70b-versatile",
+    },
+    "openrouter": {
+        "base_url": "https://openrouter.ai/api/v1",
+        "bien_key": "OPENROUTER_API_KEY",
+        "model": "meta-llama/llama-3.1-8b-instruct:free",
+    },
+    "ollama": {
+        "base_url": "http://localhost:11434/v1",
+        "bien_key": None,  # Ollama không kiểm tra key
+        "model": "llama3.2",
+    },
+    "openai": {
+        "base_url": None,
+        "bien_key": "OPENAI_API_KEY",
+        "model": "gpt-4o-mini",
+    },
+}
+
+
+def tao_llm(temperature: float) -> ChatOpenAI:
+    """
+    Tạo ChatOpenAI trỏ tới provider đang chọn trong .env:
+      LLM_PROVIDER = gemini | groq | openrouter | ollama | openai
+      LLM_MODEL    = (tuỳ chọn) đổi model mặc định của provider
+      LLM_BASE_URL = (tuỳ chọn) đổi endpoint
+    """
+    ten = os.getenv("LLM_PROVIDER", "gemini").strip().lower()
+    if ten not in CAC_PROVIDER:
+        raise ValueError(
+            f"LLM_PROVIDER='{ten}' không hợp lệ. Chọn một trong: {', '.join(CAC_PROVIDER)}"
+        )
+    cau_hinh = CAC_PROVIDER[ten]
+
+    if cau_hinh["bien_key"]:
+        api_key = os.getenv(cau_hinh["bien_key"])
+        if not api_key:
+            raise RuntimeError(
+                f"Thiếu {cau_hinh['bien_key']} trong file .env (LLM_PROVIDER={ten})."
+            )
+    else:
+        api_key = "ollama"
+
+    return ChatOpenAI(
+        model=os.getenv("LLM_MODEL") or cau_hinh["model"],
+        base_url=os.getenv("LLM_BASE_URL") or cau_hinh["base_url"],
+        api_key=api_key,
+        temperature=temperature,
+        max_retries=5,  # free tier hay dính 429 (rate limit) -> tự retry có backoff
+    )
+
 DUONG_DAN_DB = os.getenv("TROLYAI_DB", "memory.db")  # bộ nhớ dài hạn
 
 
@@ -71,12 +135,16 @@ class TroLyAI:
         self.tools = tao_tools(self.thu_muc_lam_viec)
 
         # LLM cho Worker — có tools
-        llm_worker = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
+        llm_worker = tao_llm(temperature=0.3)
         self.worker_llm = llm_worker.bind_tools(self.tools)
 
         # LLM cho Evaluator — structured output, nghiêm khắc hơn
-        llm_evaluator = ChatOpenAI(model="gpt-4o-mini", temperature=0.1)
-        self.evaluator_llm = llm_evaluator.with_structured_output(KetQuaDanhGia)
+        llm_evaluator = tao_llm(temperature=0.1)
+        # function_calling: nhiều provider miễn phí (Groq, Gemini, Ollama...) không hỗ trợ
+        # json_schema strict như OpenAI, nhưng đều hỗ trợ tool calling
+        self.evaluator_llm = llm_evaluator.with_structured_output(
+            KetQuaDanhGia, method="function_calling"
+        )
 
         # SQLite checkpointer — nhớ qua các session
         self.conn = sqlite3.connect(DUONG_DAN_DB, check_same_thread=False)
@@ -149,7 +217,7 @@ Hãy làm lại và đảm bảo khắc phục được tất cả điểm trên
         if phan_hoi_truoc:
             ghi_chu_lich_su = f"\nBạn đã feedback trước đó: {phan_hoi_truoc}\nNếu trợ lý vẫn mắc lỗi cũ, hãy đặt can_them_thong_tin=True."
 
-        ket_qua = self.evaluator_llm.invoke([
+        ket_qua = self._goi_evaluator([
             SystemMessage(content=f"""Bạn là Evaluator — đánh giá chất lượng câu trả lời của Trợ Lý AI.
 
 Tiêu chuẩn thành công:
@@ -179,6 +247,24 @@ Câu trả lời cuối cùng của trợ lý cần đánh giá:
             "can_nguoi_dung": ket_qua.can_them_thong_tin,
             "so_vong": state.get("so_vong", 0) + 1,
         }
+
+    def _goi_evaluator(self, tin_nhan: list) -> KetQuaDanhGia:
+        """
+        Gọi Evaluator. Model miễn phí/nhỏ đôi khi trả structured output hỏng (hoặc None),
+        hoặc dính rate limit -> không để cả graph sập: chấp nhận câu trả lời của Worker.
+        """
+        try:
+            ket_qua = self.evaluator_llm.invoke(tin_nhan)
+            if isinstance(ket_qua, KetQuaDanhGia):
+                return ket_qua
+            raise ValueError("Evaluator không trả về đúng schema")
+        except Exception as e:
+            print(f"[Evaluator] Bỏ qua đánh giá do lỗi: {e}")
+            return KetQuaDanhGia(
+                phan_hoi="Không đánh giá được (lỗi từ model) — giữ nguyên câu trả lời.",
+                da_dat_tieu_chuan=True,
+                can_them_thong_tin=False,
+            )
 
     def _dinh_tuyen_worker(self, state: TrangThaiTroLy) -> str:
         """Sau Worker: đến tools hay evaluator?"""

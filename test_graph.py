@@ -3,7 +3,7 @@ import os
 import tempfile
 from pathlib import Path
 
-os.environ.setdefault("OPENAI_API_KEY", "test-key")
+os.environ["LLM_PROVIDER"] = "ollama"  # không cần API key, test không gọi mạng
 os.environ["TROLYAI_DB"] = str(Path(tempfile.mkdtemp()) / "memory.db")
 
 from langchain_core.messages import AIMessage
@@ -62,5 +62,17 @@ print("PASS - giới hạn 3 vòng")
 agent.xu_ly_yeu_cau("yêu cầu 2")
 assert agent.evaluator_llm.so_lan == 6, agent.evaluator_llm.so_lan
 print("PASS - bộ đếm vòng tính theo từng yêu cầu")
+
+# 4. Evaluator lỗi (model free trả schema hỏng / rate limit) -> không sập, chấp nhận câu trả lời
+class LLMGiaEvaluatorLoi:
+    def invoke(self, messages):
+        raise RuntimeError("429 rate limit")
+
+
+agent, _ = tao_agent("u3", dat=True)
+agent.evaluator_llm = LLMGiaEvaluatorLoi()
+kq = agent.xu_ly_yeu_cau("Viết báo cáo")
+assert kq["hoan_thanh"] and "Đã lưu" in kq["tra_loi"]
+print("PASS - evaluator lỗi vẫn trả được câu trả lời")
 
 print("\nGraph hoạt động đúng!")
