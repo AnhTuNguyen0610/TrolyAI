@@ -29,7 +29,11 @@ def khoi_tao_phien(yeu_cau_request: gr.Request):
     thu_muc = Path(f"./workspaces/{ma_user}")
     thu_muc.mkdir(parents=True, exist_ok=True)
 
-    agent = TroLyAI(ma_nguoi_dung=ma_user, thu_muc_lam_viec=thu_muc)
+    try:
+        agent = TroLyAI(ma_nguoi_dung=ma_user, thu_muc_lam_viec=thu_muc)
+    except (RuntimeError, ValueError) as e:
+        # Thường là thiếu API key / sai LLM_PROVIDER trong .env
+        return phien, f"Không khởi tạo được agent: {e}"
     phien.agent = agent
 
     thong_bao = f"TroLy.AI sẵn sàng phục vụ! Session: {phien.session_id}"
@@ -82,8 +86,10 @@ def dat_lai(phien, yeu_cau_request: gr.Request):
     thu_muc = Path(f"./workspaces/{ma_user}")
     thu_muc.mkdir(parents=True, exist_ok=True)
 
-    agent_moi = TroLyAI(ma_nguoi_dung=ma_user, thu_muc_lam_viec=thu_muc)
-    phien_moi.agent = agent_moi
+    try:
+        phien_moi.agent = TroLyAI(ma_nguoi_dung=ma_user, thu_muc_lam_viec=thu_muc)
+    except (RuntimeError, ValueError) as e:
+        return [], "", "", phien_moi, f"Không khởi tạo được agent: {e}"
 
     thong_bao = f"Đã reset. Session mới: {phien_moi.session_id}"
     return [], "", "", phien_moi, thong_bao
