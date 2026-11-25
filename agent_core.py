@@ -17,6 +17,8 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 
 load_dotenv(override=True)
 
+MAX_VONG_DANH_GIA = 3
+
 
 # ─── State ────────────────────────────────────────────────────────────
 
@@ -26,6 +28,7 @@ class TrangThaiTroLy(TypedDict):
     phan_hoi_cong_viec: Optional[str]
     da_hoan_thanh: bool
     can_nguoi_dung: bool
+    so_vong: int  # số vòng Worker-Evaluator của YÊU CẦU HIỆN TẠI
 
 
 # ─── Evaluator Output Schema ──────────────────────────────────────────
@@ -248,6 +251,7 @@ Câu trả lời cuối cùng của trợ lý cần đánh giá:
             "phan_hoi_cong_viec": ket_qua.phan_hoi,
             "da_hoan_thanh": ket_qua.da_dat_tieu_chuan,
             "can_nguoi_dung": ket_qua.can_them_thong_tin,
+            "so_vong": state.get("so_vong", 0) + 1,
         }
 
     def _dinh_tuyen_worker(self, state: TrangThaiTroLy) -> str:
@@ -261,12 +265,10 @@ Câu trả lời cuối cùng của trợ lý cần đánh giá:
         """Sau Evaluator: xong hay cần làm lại?"""
         if state.get("da_hoan_thanh") or state.get("can_nguoi_dung"):
             return END
-        # Đếm số vòng để tránh loop vô hạn
-        so_msg_evaluator = sum(
-            1 for m in state["messages"]
-            if isinstance(m, AIMessage) and "[Evaluator]" in (m.content or "")
-        )
-        if so_msg_evaluator >= 3:
+        # Giới hạn số vòng của yêu cầu hiện tại để tránh loop vô hạn.
+        # (Trước đây đếm "[Evaluator]" trong cả lịch sử thread -> sau vài lượt chat
+        # thì vòng lặp tự sửa sai bị tắt luôn.)
+        if state.get("so_vong", 0) >= MAX_VONG_DANH_GIA:
             return END
         return "worker"
 
@@ -306,6 +308,7 @@ Câu trả lời cuối cùng của trợ lý cần đánh giá:
             "phan_hoi_cong_viec": None,
             "da_hoan_thanh": False,
             "can_nguoi_dung": False,
+            "so_vong": 0,
         }
 
         ket_qua = self.graph.invoke(state_dau_vao, config=config)
