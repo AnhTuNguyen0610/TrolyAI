@@ -12,8 +12,10 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
-from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.prebuilt import ToolNode
 from langgraph.checkpoint.sqlite import SqliteSaver
+
+from tools_module import tao_tools, lay_mo_ta_tools
 
 load_dotenv(override=True)
 
@@ -64,7 +66,7 @@ class TroLyAI:
     def _khoi_tao(self):
         """Khởi tạo toàn bộ hệ thống."""
         # Tools — với sandbox trỏ đến thư mục riêng của user này
-        self.tools = self._tao_tools()
+        self.tools = tao_tools(self.thu_muc_lam_viec)
 
         # LLM cho Worker — có tools
         llm_worker = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
@@ -81,77 +83,6 @@ class TroLyAI:
         # Build graph
         self._xay_graph()
 
-    def _tao_tools(self) -> list:
-        """Tạo tools với sandbox trỏ đến thư mục riêng."""
-        from langchain_core.tools import tool
-        from langchain_community.utilities import GoogleSerperAPIWrapper
-        import subprocess
-        import os
-
-        serper = GoogleSerperAPIWrapper()
-        sandbox = self.thu_muc_lam_viec
-        ma_user = self.ma_nguoi_dung
-
-        @tool
-        def tim_kiem_web(truy_van: str) -> str:
-            """Tìm kiếm thông tin trên internet. Dùng khi cần thông tin thị trường, tin tức, số liệu."""
-            try:
-                return f"Kết quả cho '{truy_van}':\n" + serper.run(truy_van)
-            except Exception as e:
-                return f"Lỗi tìm kiếm: {e}"
-
-        @tool
-        def ghi_bao_cao(ten_file: str, noi_dung: str) -> str:
-            """
-            Lưu báo cáo, phân tích, hoặc kết quả vào file.
-            Tham số ten_file: tên file với đuôi .md hoặc .txt
-            Tham số noi_dung: nội dung đầy đủ cần lưu
-            """
-            duong_dan = sandbox / ten_file
-            duong_dan.write_text(noi_dung, encoding="utf-8")
-            return f"✅ Đã lưu '{ten_file}' ({duong_dan.stat().st_size} bytes) vào workspace của {ma_user}."
-
-        @tool
-        def doc_tai_lieu(ten_file: str) -> str:
-            """Đọc file đã lưu trước đó trong workspace. Tham số: tên file."""
-            duong_dan = sandbox / ten_file
-            if not duong_dan.exists():
-                files = [f.name for f in sandbox.iterdir() if f.is_file()]
-                return f"File không tồn tại. Files có sẵn: {files or 'chưa có'}"
-            noi_dung = duong_dan.read_text(encoding="utf-8")
-            return noi_dung[:6000] + "..." if len(noi_dung) > 6000 else noi_dung
-
-        @tool
-        def tinh_toan_kinh_doanh(phep_tinh: str) -> str:
-            """
-            Tính toán số liệu kinh doanh: doanh thu, lợi nhuận, ROI, tỷ lệ %.
-            Ví dụ: '(800000000 - 550000000) / 800000000 * 100' cho biên lợi nhuận.
-            Phải là biểu thức toán học thuần túy.
-            """
-            import math
-            try:
-                ket_qua = eval(
-                    phep_tinh.replace(",", "").replace("^", "**"),
-                    {"__builtins__": {}, "math": math, "sqrt": math.sqrt}
-                )
-                if isinstance(ket_qua, float):
-                    return f"{phep_tinh} = {ket_qua:,.2f}"
-                return f"{phep_tinh} = {ket_qua:,}"
-            except Exception as e:
-                return f"Lỗi tính toán: {e}"
-
-        @tool
-        def xem_workspace() -> str:
-            """Xem danh sách tất cả files trong workspace cá nhân."""
-            files = list(sandbox.iterdir())
-            if not files:
-                return "Workspace đang trống."
-            danh_sach = [f"{f.name} ({f.stat().st_size:,} bytes)"
-                        for f in sorted(files) if f.is_file()]
-            return f"Workspace của {ma_user}:\n" + "\n".join(danh_sach)
-
-        return [tim_kiem_web, ghi_bao_cao, doc_tai_lieu, tinh_toan_kinh_doanh, xem_workspace]
-
     def _node_worker(self, state: TrangThaiTroLy) -> dict:
         """Node Worker: LLM với tools, xử lý yêu cầu của người dùng."""
         tieu_chuan = state["tieu_chuan_thanh_cong"]
@@ -162,20 +93,17 @@ class TroLyAI:
 Thời gian hiện tại: {datetime.now().strftime("%d/%m/%Y %H:%M")}
 Người dùng hiện tại: {self.ma_nguoi_dung}
 
-Bạn có thể:
-- Tìm kiếm thông tin thị trường và tin tức kinh doanh
-- Phân tích số liệu và tính toán KPI
-- Viết và lưu báo cáo chuyên nghiệp
-- Đọc và cập nhật tài liệu đã lưu
+Công cụ bạn có:
+{lay_mo_ta_tools(self.tools)}
 
 Tiêu chuẩn cần đạt cho nhiệm vụ này:
 {tieu_chuan}
 
 Nguyên tắc làm việc:
 - Dùng tiếng Việt tự nhiên, chuyên nghiệp
-- Nếu cần tìm kiếm thông tin: dùng tool tim_kiem_web
-- Nếu có số liệu cần tính: dùng tool tinh_toan_kinh_doanh
-- Khi viết báo cáo: lưu file bằng tool ghi_bao_cao
+- Cần thông tin bên ngoài: dùng tim_kiem_web
+- Có số liệu cần tính: dùng tinh_toan (hoặc chay_python nếu phức tạp)
+- Khi viết báo cáo: lưu file bằng ghi_file
 - Nếu cần thêm thông tin từ người dùng: hỏi rõ ràng — bắt đầu bằng "Câu hỏi:"
 - Khi hoàn thành: trả lời trực tiếp, không hỏi thêm"""
 
