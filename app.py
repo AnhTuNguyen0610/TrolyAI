@@ -48,10 +48,15 @@ def xu_ly_tin_nhan(phien, tin_nhan: str, tieu_chuan: str, lich_su: list):
     # Thêm tin nhắn người dùng vào lịch sử
     lich_su.append({"role": "user", "content": tin_nhan})
 
-    ket_qua = phien.agent.xu_ly_yeu_cau(
-        tin_nhan=tin_nhan,
-        tieu_chuan=tieu_chuan or "Câu trả lời rõ ràng, đầy đủ, và hữu ích cho doanh nghiệp."
-    )
+    try:
+        ket_qua = phien.agent.xu_ly_yeu_cau(
+            tin_nhan=tin_nhan,
+            tieu_chuan=tieu_chuan or "Câu trả lời rõ ràng, đầy đủ, và hữu ích cho doanh nghiệp."
+        )
+    except Exception as e:
+        # Lỗi API key / mạng / rate limit... -> báo trong chat thay vì làm treo UI
+        lich_su.append({"role": "assistant", "content": f"Có lỗi khi xử lý yêu cầu: {e}"})
+        return lich_su, phien
 
     # Câu trả lời chính
     lich_su.append({"role": "assistant", "content": ket_qua["tra_loi"]})
